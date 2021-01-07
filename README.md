@@ -30,7 +30,8 @@ import pandas as pd
 
 idx = pd.IndexSlice
 n = experiment.normalize(background='neg').sort_index()
-d = n.set_index(['induction', 'sample', 'plate']) \
+d = n.reset_index() \
+     .set_index(['induction', 'sample', 'plate']) \
      .loc[:, ['normalized']] \
      .dropna() \
      .sort_index()
