@@ -18,10 +18,10 @@ def catplot(data, title=None, xlabel=None, ylabel=None, colors=None, alpha=0.5, 
 
     category_level, sample_level, replica_level = 0, 1, 2
 
-    if data.index.levels >= 3:
+    if len(data.index.levels) >= 3:
         sample_search = lambda a, b: data.loc[(a, b)]
         replica_search = lambda a, b, c: data.loc[(a, b, c)]
-    elif data.index.levels == 2:
+    elif len(data.index.levels) == 2:
         if categories is False:
             category_level, sample_level, replica_level = False, 0, 1
             sample_search = lambda a, b: data.loc[b]
