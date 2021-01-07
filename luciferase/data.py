@@ -13,6 +13,10 @@ class TecanInfinitePlate:
         return self._data.copy()
 
     @property
+    def metadata(self):
+        return self._metadata.copy()
+
+    @property
     def wells(self):
         return self._data.melt(var_name='column', ignore_index=False).set_index('column', append=True).dropna()
 

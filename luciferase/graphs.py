@@ -4,11 +4,12 @@ import numpy as np
 from collections.abc import Iterable
 from matplotlib import pyplot as plt
 from matplotlib.patches import Patch
+from pandas import MultiIndex
 
 
 def catplot(data, title=None, xlabel=None, ylabel=None, colors=None, alpha=0.5, loc=None,
             width=0.7, ax=None, clip=True, xlim=None, ylim=None, markers=None,
-            categories=None, samples=None, replicas=None, spacing=1.0):
+            categories=None, samples=None, replicas=None, spacing=None):
 
     if ax is None:
         _, ax = plt.subplots()
@@ -18,24 +19,27 @@ def catplot(data, title=None, xlabel=None, ylabel=None, colors=None, alpha=0.5, 
 
     category_level, sample_level, replica_level = 0, 1, 2
 
-    if len(data.index.levels) >= 3:
-        sample_search = lambda a, b: data.loc[(a, b)]
-        replica_search = lambda a, b, c: data.loc[(a, b, c)]
-    elif len(data.index.levels) == 2:
-        if categories is False:
-            category_level, sample_level, replica_level = False, 0, 1
-            sample_search = lambda a, b: data.loc[b]
-            replica_search = lambda a, b, c: data.loc[(b, c)]
-        elif replicas is False:
-            replica_level = False
+    if isinstance(data.index, MultiIndex):
+        if len(data.index.levels) >= 3:
             sample_search = lambda a, b: data.loc[(a, b)]
-            replica_search = lambda a, b, c: data.loc[(a, b)]
-        else:
-            samples = False
-            sample_level, replica_level = False, 1
-            sample_search = lambda a, b: data.loc[a]
-            replica_search = lambda a, b, c: data.loc[(a, c)]
+            replica_search = lambda a, b, c: data.loc[(a, b, c)]
+        elif len(data.index.levels) == 2:
+            if categories is False:
+                category_level, sample_level, replica_level = False, 0, 1
+                sample_search = lambda a, b: data.loc[b]
+                replica_search = lambda a, b, c: data.loc[(b, c)]
+            elif replicas is False:
+                replica_level = False
+                sample_search = lambda a, b: data.loc[(a, b)]
+                replica_search = lambda a, b, c: data.loc[(a, b)]
+            else:
+                samples = False
+                spacing = 0 if spacing is None else spacing
+                sample_level, replica_level = False, 1
+                sample_search = lambda a, b: data.loc[a]
+                replica_search = lambda a, b, c: data.loc[(a, c)]
     else:
+        spacing = 0 if spacing is None else spacing
         if categories is False and replicas is False:
             category_level, sample_level, replica_level = False, 0, False
             sample_search = lambda a, b: data.loc[b]
@@ -69,6 +73,7 @@ def catplot(data, title=None, xlabel=None, ylabel=None, colors=None, alpha=0.5, 
     if replicas is False:
         replicas = [slice(None)]
 
+    spacing = 1.0 if spacing is None else spacing
     markers = ['o', 's', 'D', '^', '*', 'X', 'P', 'p', 'h', 'v'] if markers is None else markers
     position = 1
     swarms = []
@@ -118,7 +123,7 @@ def catplot(data, title=None, xlabel=None, ylabel=None, colors=None, alpha=0.5, 
     ax.set_ylabel(ylabel)
     ax.set_xlabel(xlabel)
 
-    if samples:
+    if colors is not None:
         handles = [Patch(facecolor='white', edgecolor=t[1], label=t[0]) for t in colors.items()]
         ax.legend(handles=handles, frameon=False, loc=loc)
 

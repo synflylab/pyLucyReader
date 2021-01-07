@@ -11,26 +11,43 @@ class TecanReader:
 
     @classmethod
     def read(cls, file):
-        wb = openpyxl.load_workbook(file, read_only=True)
-        ws = wb.active
-        start_row = cls._get_data_row(ws)
-        date = cls._get_date(ws)
-        time = cls._get_time(ws)
-        timestamp = datetime.datetime.strptime(date.strftime('%m/%d/%Y ') + time, cls.TS_FORMAT)
-        instrument = cls._get_instrument(ws)
-        start_ts = cls._get_start_ts(ws)
-        end_ts = cls._get_end_ts(ws)
-        raw = pd.read_excel(file, skiprows=start_row - 1, header=0, index_col=0)
-        data = raw.loc[
-            [i for i in raw.index if str(i).isupper() and len(i) == 1],
-            [c for c in raw.columns if not str(c).startswith('Unnamed: ')]].astype(float)
+        if isinstance(file, list):
+            wells = None
+            metadata = None
+            for f in file:
+                p = cls.read(f)
+                if wells is None:
+                    wells = p.wells
+                else:
+                    wells = wells.append(p.wells.drop(wells.index, errors='ignore')).sort_index()
+                if metadata is None:
+                    metadata = p.metadata
+                else:
+                    for k, v in metadata.items():
+                        if v is None:
+                            metadata[k] = p.metadata.get(k, None)
+            data = wells.reset_index().pivot(index='row', columns='column', values='value')
+        else:
+            wb = openpyxl.load_workbook(file, read_only=True)
+            ws = wb.active
+            start_row = cls._get_data_row(ws)
+            date = cls._get_date(ws)
+            time = cls._get_time(ws)
+            timestamp = datetime.datetime.strptime(date.strftime('%m/%d/%Y ') + time, cls.TS_FORMAT)
+            instrument = cls._get_instrument(ws)
+            start_ts = cls._get_start_ts(ws)
+            end_ts = cls._get_end_ts(ws)
+            raw = pd.read_excel(file, skiprows=start_row - 1, header=0, index_col=0)
+            data = raw.loc[
+                [i for i in raw.index if str(i).isupper() and len(i) == 1],
+                [c for c in raw.columns if not str(c).startswith('Unnamed: ')]].astype(float)
 
-        metadata = {
-            'timestamp': timestamp,
-            'start': start_ts,
-            'end': end_ts,
-            'instrument': instrument
-        }
+            metadata = {
+                'timestamp': timestamp,
+                'start': start_ts,
+                'end': end_ts,
+                'instrument': instrument
+            }
 
         return TecanInfinitePlate(data, metadata)
 
@@ -71,7 +88,8 @@ class TecanReader:
         for row in ws.iter_rows(min_col=1, max_col=1):
             for cell in row:
                 if cell.value == 'Start Time:':
-                    return datetime.datetime.strptime(ws.cell(row=cell.row, column=2).value, cls.TS_FORMAT)
+                    value = ws.cell(row=cell.row, column=2).value
+                    return datetime.datetime.strptime(value, cls.TS_FORMAT) if value is not None else value
         return None
 
     @classmethod
@@ -79,7 +97,8 @@ class TecanReader:
         for row in ws.iter_rows(min_col=1, max_col=1):
             for cell in row:
                 if cell.value == 'End Time:':
-                    return datetime.datetime.strptime(ws.cell(row=cell.row, column=2).value, cls.TS_FORMAT)
+                    value = ws.cell(row=cell.row, column=2).value
+                    return datetime.datetime.strptime(value, cls.TS_FORMAT) if value is not None else value
         return None
 
 
