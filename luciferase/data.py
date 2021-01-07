@@ -47,7 +47,7 @@ class ExperimentMetadata(pd.DataFrame):
                  .drop('well', axis='columns')
         raw['plate'] = raw['plate'].astype(int)
         raw['column'] = raw['column'].astype(int)
-        super().__init__(raw.set_index(['plate', 'row', 'column']))
+        super().__init__(raw.set_index(['plate', 'row', 'column']).sort_index())
 
 
 class LuciferaseExperiment:
@@ -145,4 +145,4 @@ class DualLuciferaseExperiment(LuciferaseExperiment):
             raw['normalized'] = raw['value'] / raw['reference']
             raw = raw.drop('reference', axis='columns')
 
-        return raw
+        return raw.sort_index()
