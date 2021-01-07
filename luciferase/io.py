@@ -39,10 +39,9 @@ class TecanReader:
             start_ts = cls._get_start_ts(ws)
             end_ts = cls._get_end_ts(ws)
             raw = pd.read_excel(file, skiprows=start_row - 1, header=0, index_col=0)
-            data = raw.loc[
+            data = raw.replace('OVER', np.inf).loc[
                     [i for i in raw.index if str(i).isupper() and len(i) == 1],
-                    [c for c in raw.columns if not str(c).startswith('Unnamed: ')]]
-            data = data.replace('OVER', np.inf).astype(float)
+                    [c for c in raw.columns if not str(c).startswith('Unnamed: ')]].astype(float)
 
             metadata = {
                 'timestamp': timestamp,
