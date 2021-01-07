@@ -16,47 +16,88 @@ def catplot(data, title=None, xlabel=None, ylabel=None, colors=None, alpha=0.5, 
     ticks = []
     tick_labels = []
 
-    if data.index.levels == 3:
-        categories = data.index.unique(0) if categories is None else categories
-        samples = data.index.unique(1) if samples is None else samples
-        replicas = data.index.unique(2) if replicas is None else replicas
+    category_level, sample_level, replica_level = 0, 1, 2
+
+    if data.index.levels >= 3:
+        sample_search = lambda a, b: data.loc[(a, b)]
+        replica_search = lambda a, b, c: data.loc[(a, b, c)]
+    elif data.index.levels == 2:
+        if categories is False:
+            category_level, sample_level, replica_level = False, 0, 1
+            sample_search = lambda a, b: data.loc[b]
+            replica_search = lambda a, b, c: data.loc[(b, c)]
+        elif replicas is False:
+            replica_level = False
+            sample_search = lambda a, b: data.loc[(a, b)]
+            replica_search = lambda a, b, c: data.loc[(a, b)]
+        else:
+            samples = False
+            sample_level, replica_level = False, 1
+            sample_search = lambda a, b: data.loc[a]
+            replica_search = lambda a, b, c: data.loc[(a, c)]
+    else:
+        if categories is False and replicas is False:
+            category_level, sample_level, replica_level = False, 0, False
+            sample_search = lambda a, b: data.loc[b]
+            replica_search = lambda a, b, c: data.loc[b]
+        elif categories is False and samples is False:
+            category_level, sample_level, replica_level = False, False, 0
+            sample_search = lambda a, b: data
+            replica_search = lambda a, b, c: data.loc[c]
+        else:
+            samples, replicas = False, False
+            sample_level, replica_level = False, False
+            sample_search = lambda a, b: data.loc[a]
+            replica_search = lambda a, b, c: data.loc[a]
+
+    if category_level is not False:
+        categories = data.index.unique(category_level) if categories is None else categories
+    if sample_level is not False:
+        samples = data.index.unique(sample_level) if samples is None else samples
+    if replica_level is not False:
+        replicas = data.index.unique(replica_level) if replicas is None else replicas
+
+    if categories is False:
+        categories = [slice(None)]
+    if samples is False:
+        cmap = lambda c: 'k'
+        samples = [slice(None)]
+    else:
+        palette = ['C' + str(i) for i in range(len(samples))] if colors is None else colors
+        colors = dict(zip(samples, palette))
+        cmap = lambda c: colors[c]
+    if replicas is False:
+        replicas = [slice(None)]
 
     markers = ['o', 's', 'D', '^', '*', 'X', 'P', 'p', 'h', 'v'] if markers is None else markers
     position = 1
-    palette = ['C' + str(i) for i in range(len(samples))] if colors is None else colors
-    colors = dict(zip(samples, palette))
-
     swarms = []
 
     for category in categories:
         p_sum = 0
         p_count = 0
-        c = 1
         for sample in samples:
             try:
-                d = data.loc[(category, sample)]
+                d = sample_search(category, sample)
             except KeyError:
                 continue
             swarm = []
             ax.boxplot(d.values.flatten(), showfliers=False,
-                       positions=[position], widths=width, boxprops=dict(color=colors[sample]),
-                       medianprops=dict(color=colors[sample]))
-            s = 0
-            for replica in replicas:
+                       positions=[position], widths=width, boxprops=dict(color=cmap(sample)),
+                       medianprops=dict(color=cmap(sample)))
+            for s, replica in enumerate(replicas):
                 try:
-                    d = data.loc[(category, sample, replica)]
+                    d = replica_search(category, sample, replica)
                 except KeyError:
                     continue
                 y = d.values.flatten()
                 if clip and ylim is not None:
                     y = np.clip(y, *ylim)
                 x = [position for _ in range(len(y))]
-                points = ax.scatter(x, y, color=colors[sample], alpha=alpha, marker=markers[s])
+                points = ax.scatter(x, y, color=cmap(sample), alpha=alpha, marker=markers[s])
                 swarm.append(points)
-                s += 1
             p_sum += position
             p_count += 1
-            c += 1
             position += 1
             swarms.append(swarm)
         ticks.append(p_sum / p_count)
@@ -77,8 +118,9 @@ def catplot(data, title=None, xlabel=None, ylabel=None, colors=None, alpha=0.5, 
     ax.set_ylabel(ylabel)
     ax.set_xlabel(xlabel)
 
-    handles = [Patch(facecolor='white', edgecolor=t[1], label=t[0]) for t in colors.items()]
-    ax.legend(handles=handles, frameon=False, loc=loc)
+    if samples:
+        handles = [Patch(facecolor='white', edgecolor=t[1], label=t[0]) for t in colors.items()]
+        ax.legend(handles=handles, frameon=False, loc=loc)
 
     return ax
 
