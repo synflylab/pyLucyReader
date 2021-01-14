@@ -3,10 +3,109 @@ import openpyxl
 import numpy as np
 import pandas as pd
 
-from luciferase.data import TecanInfinitePlate, ExperimentMetadata, LuciferaseExperiment, DualLuciferaseExperiment
+from luciferase.data import SinglePlate, ExperimentMetadata, LuciferaseExperiment, DualLuciferaseExperiment, \
+    InstrumentMetadata, PlateMetadata, LabelMetadata, IntUnitValue, RealUnitValue, ComplexUnitValue, StringUnitValue
 
 
 class TecanReader:
+
+    TS_FORMAT = '%m/%d/%Y %I:%M:%S %p'
+
+    @classmethod
+    def read(cls, file):
+        if isinstance(file, list):
+            raise NotImplementedError
+        else:
+            wb = openpyxl.load_workbook(file, read_only=True)
+            ws = wb.active
+            header = cls._read_header(ws)
+            return header
+
+    @classmethod
+    def _read_header(cls, ws):
+        instrument_metadata = {
+            'application': cls._find_beginning(ws, 'Application: ', min_col=1, max_col=1),
+            'device': cls._find_beginning(ws, 'Device: ', min_col=1, max_col=1),
+            'firmware': cls._find_beginning(ws, 'Firmware: ', min_col=1, max_col=1),
+            'serial_number': cls._find_beginning(ws, 'Serial number: ', min_col=5, max_col=5),
+            'system': cls._find_exact(ws, 'System', col_shift=4, min_col=1, max_col=1),
+            'user': cls._find_exact(ws, 'User', col_shift=4, min_col=1, max_col=1),
+        }
+
+        plate_metadata = {
+            'type': cls._find_exact(ws, 'Plate', col_shift=4, min_col=1, max_col=1)
+        }
+
+        InstrumentMetadata(instrument_metadata), PlateMetadata(plate_metadata)
+
+        label_metadata = [cls._read_label(ws, label) for label in cls._find_labels(ws)]
+
+        return label_metadata
+
+    @classmethod
+    def _find_labels(cls, ws):
+        labels = []
+        for row in ws.iter_rows(min_col=1, max_col=1):
+            for cell in row:
+                if cell.value == "Mode":
+                    labels.append(cell)
+        return labels
+
+    @classmethod
+    def _read_label(cls, ws, label):
+        metadata = {
+            'mode': ws.cell(row=label.row, column=label.column + 4).value
+        }
+        for row in ws.iter_rows(min_col=1, max_col=1, min_row=label.row+1, max_row=label.row+21):
+            for cell in row:
+                if (cell.value == "Mode" or
+                        cell.value == "Part of Plate" or
+                        not cell.value):
+                    break
+                key = str(cell.value).lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
+                value = ws.cell(row=cell.row, column=cell.column + 4).value
+                unit = ws.cell(row=cell.row, column=cell.column + 5).value
+                if unit is None:
+                    metadata[key] = value
+                else:
+                    if isinstance(value, int):
+                        metadata[key] = IntUnitValue(value, unit)
+                    elif isinstance(value, float):
+                        metadata[key] = RealUnitValue(value, unit)
+                    elif isinstance(value, complex):
+                        metadata[key] = ComplexUnitValue(value, unit=unit)
+                    elif isinstance(value, str):
+                        metadata[key] = StringUnitValue(value, unit)
+                    else:
+                        raise ValueError('Unexpected value found in cell ' + str(cell))
+            else:
+                continue
+            break
+        return LabelMetadata(metadata)
+
+    @classmethod
+    def _find_exact(cls, ws, value, col_shift=1, **opts):
+        return cls._find_cell(ws, lambda c: c.value == value,
+                              lambda c: ws.cell(row=c.row, column=c.column + col_shift).value, **opts)
+
+    @classmethod
+    def _find_beginning(cls, ws, value, **opts):
+        return cls._find_cell(ws, lambda c: str(c.value).startswith(value),
+                              lambda c: c.value.replace(value, ''), **opts)
+
+    @classmethod
+    def _find_cell(cls, ws, condition, transform=None, **opts):
+        for row in ws.iter_rows(**opts):
+            for cell in row:
+                if condition(cell):
+                    if transform is None:
+                        return cell.value
+                    else:
+                        return transform(cell)
+        return None
+
+
+class OldTecanReader:
 
     TS_FORMAT = '%m/%d/%Y %I:%M:%S %p'
 
@@ -51,7 +150,7 @@ class TecanReader:
                 'instrument': instrument
             }
 
-        return TecanInfinitePlate(data, metadata)
+        return SinglePlate(data, metadata)
 
     @staticmethod
     def _get_data_row(ws):

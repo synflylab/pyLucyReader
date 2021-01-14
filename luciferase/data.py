@@ -2,11 +2,122 @@ import pandas as pd
 import numpy as np
 
 
+class UnitValue:
+
+    def __new__(cls, unit):
+        o = object.__new__(cls)
+        o._unit = unit
+        return o
+
+    def __repr__(self):
+        if not self._unit:
+            return super().__repr__()
+        else:
+            return str(super().__repr__()) + ' ' + str(self._unit)
+
+
+class IntUnitValue(UnitValue, int):
+
+    def __new__(cls, value, unit=None):
+        i = int.__new__(cls, value)
+        i._unit = unit
+        return i
+
+
+class RealUnitValue(UnitValue, float):
+
+    def __new__(cls, value, unit=None):
+        i = float.__new__(cls, value)
+        i._unit = unit
+        return i
+
+
+class ComplexUnitValue(UnitValue, complex):
+
+    def __new__(cls, real, imag=None, unit=None):
+        i = complex.__new__(cls, real, imag)
+        i._unit = unit
+        return i
+
+
+class StringUnitValue(str, UnitValue):
+
+    def __new__(cls, value, unit=None):
+        i = str.__new__(cls, value)
+        i._unit = unit
+        return i
+
+
+class GenericMetadata:
+
+    def __init__(self, metadata):
+        self._metadata = metadata
+
+    def __getattr__(self, item):
+        if item in self._metadata.keys():
+            return self._metadata[item]
+        else:
+            raise AttributeError("type object " + type(self).__name__ + " has no attribute '" + str(item) + "'")
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        return type(self).__name__ + '(' + str(self._metadata) + ')'
+
+
+class InstrumentMetadata(GenericMetadata):
+    pass
+
+
+class PlateMetadata(GenericMetadata):
+    pass
+
+
+class LabelMetadata(GenericMetadata):
+    pass
+
+
 class TecanInfinitePlate:
 
     def __init__(self, data, metadata):
-        self._data = data.rename_axis(index='row', columns='column')
+        self._data = data
         self._metadata = metadata
+
+    @property
+    def data(self):
+        return self._data.copy()
+
+    @property
+    def metadata(self):
+        return self._metadata.copy()
+
+    @property
+    def timestamp(self):
+        return self._metadata.get('timestamp', None)
+
+    @property
+    def instrument(self):
+        return self._metadata.get('instrument', None)
+
+    @property
+    def start(self):
+        return self._metadata.get('start', None)
+
+    @property
+    def end(self):
+        return self._metadata.get('end', None)
+
+
+class TimeLapsePlate(TecanInfinitePlate):
+    pass
+
+
+class SinglePlate(TecanInfinitePlate):
+
+    def __init__(self, data, metadata):
+        super().__init__(data, metadata)
+        self._data.rename_axis(index='row', columns='column', inplace=True)
 
     @property
     def data(self):
