@@ -112,6 +112,7 @@ class TecanReader:
                     .apply(pd.to_numeric, errors='coerce')
             times = pd.Index(pd.to_timedelta(raw.iloc[0], unit='S')).rename('time')
             temps = pd.Index(raw.iloc[1]).rename('temperature')
+            print(raw.index.to_series().str.match("[A-Z]{1,2}[0-9]{1,3}"))
             data = raw.rename_axis(index='well', columns=raw.index.name) \
                       .drop(raw[~raw.index.to_series().str.match("[A-Z]{1,2}[0-9]{1,3}")].index)
             index = data.index.to_series().str.extract('([A-Z]+)([0-9]+)') \
