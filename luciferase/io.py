@@ -115,7 +115,7 @@ class TecanReader:
             data = raw.rename_axis(index='well', columns=raw.index.name) \
                       .drop(raw[~raw.index.to_series().astype('str').str.match("[A-Z]{1,2}[0-9]{1,3}")].index)
             index = data.index.to_series().str.extract('([A-Z]+)([0-9]+)') \
-                        .rename({0: 'row', 1: 'column'}, axis='columns') \
+                        .rename({0: 'row', 1: 'column'}, axis='columns').apply(pd.to_numeric, errors='ignore') \
                         .set_index(['row', 'column']).index
             columns = pd.MultiIndex.from_arrays(
                 [data.columns.rename('cycle'), pd.Series([name for c in data.columns], name='label'), times, temps])
