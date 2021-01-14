@@ -78,7 +78,7 @@ class TimeLapsePlate(TecanInfinitePlate):
 class SinglePlate(TecanInfinitePlate):
 
     def __init__(self, data, metadata):
-        super().__init__(data, metadata)
+        super().__init__(data, metadata, None)
         self._data.rename_axis(index='row', columns='column', inplace=True)
 
     @property
