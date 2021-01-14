@@ -4,11 +4,12 @@ import numpy as np
 import pandas as pd
 
 from luciferase.data import SinglePlate, ExperimentMetadata, LuciferaseExperiment, DualLuciferaseExperiment, \
-    InstrumentMetadata, PlateMetadata, LabelMetadata, IntUnitValue, RealUnitValue, ComplexUnitValue, StringUnitValue
+    InstrumentMetadata, PlateMetadata, AssayMetadata, TecanInfinitePlate
+
+from pint import Quantity, UndefinedUnitError
 
 
 class TecanReader:
-
     TS_FORMAT = '%m/%d/%Y %I:%M:%S %p'
 
     @classmethod
@@ -18,29 +19,44 @@ class TecanReader:
         else:
             wb = openpyxl.load_workbook(file, read_only=True)
             ws = wb.active
-            header = cls._read_header(ws)
-            return header
+            plate_metadata, instrument_metadata = cls._read_header(ws)
+            a_list = cls._find_assays(ws)
+            data = pd.concat([cls._read_assay(file, ws, cell[0], cell[1])
+                              for cell in zip(a_list, a_list[1:] + [None])], axis='columns')
+            assays = data.columns.unique(1)
+            plate_metadata['assays'] = dict(zip(assays, plate_metadata['assays']))
+
+            return TecanInfinitePlate(data.sort_index(axis='columns'),
+                                      PlateMetadata(plate_metadata),
+                                      InstrumentMetadata(instrument_metadata))
 
     @classmethod
     def _read_header(cls, ws):
+
+        date = cls._find_exact(ws, 'Date:', col_shift=1, min_col=1, max_col=1)
+        time = cls._find_exact(ws, 'Time:', col_shift=1, min_col=1, max_col=1)
+
         instrument_metadata = {
             'application': cls._find_beginning(ws, 'Application: ', min_col=1, max_col=1),
-            'device': cls._find_beginning(ws, 'Device: ', min_col=1, max_col=1),
+            'name': cls._find_beginning(ws, 'Device: ', min_col=1, max_col=1),
             'firmware': cls._find_beginning(ws, 'Firmware: ', min_col=1, max_col=1),
             'serial_number': cls._find_beginning(ws, 'Serial number: ', min_col=5, max_col=5),
             'system': cls._find_exact(ws, 'System', col_shift=4, min_col=1, max_col=1),
             'user': cls._find_exact(ws, 'User', col_shift=4, min_col=1, max_col=1),
+            'session_start': datetime.datetime.strptime(date.strftime('%m/%d/%Y ') + time, cls.TS_FORMAT)
         }
+
+        def _to_time(t):
+            return datetime.datetime.strptime(t, cls.TS_FORMAT) if t is not None else t
 
         plate_metadata = {
-            'type': cls._find_exact(ws, 'Plate', col_shift=4, min_col=1, max_col=1)
+            'type': cls._find_exact(ws, 'Plate', col_shift=4, min_col=1, max_col=1),
+            'assays': [cls._read_label(ws, label) for label in cls._find_labels(ws)],
+            'start': _to_time(cls._find_exact(ws, 'Start Time:', col_shift=1, min_col=1, max_col=1)),
+            'end': _to_time(cls._find_exact(ws, 'End Time:', col_shift=1, min_col=1, max_col=1)),
         }
 
-        InstrumentMetadata(instrument_metadata), PlateMetadata(plate_metadata)
-
-        label_metadata = [cls._read_label(ws, label) for label in cls._find_labels(ws)]
-
-        return label_metadata
+        return plate_metadata, instrument_metadata
 
     @classmethod
     def _find_labels(cls, ws):
@@ -56,7 +72,7 @@ class TecanReader:
         metadata = {
             'mode': ws.cell(row=label.row, column=label.column + 4).value
         }
-        for row in ws.iter_rows(min_col=1, max_col=1, min_row=label.row+1, max_row=label.row+21):
+        for row in ws.iter_rows(min_col=1, max_col=1, min_row=label.row + 1, max_row=label.row + 21):
             for cell in row:
                 if (cell.value == "Mode" or
                         cell.value == "Part of Plate" or
@@ -68,20 +84,64 @@ class TecanReader:
                 if unit is None:
                     metadata[key] = value
                 else:
-                    if isinstance(value, int):
-                        metadata[key] = IntUnitValue(value, unit)
-                    elif isinstance(value, float):
-                        metadata[key] = RealUnitValue(value, unit)
-                    elif isinstance(value, complex):
-                        metadata[key] = ComplexUnitValue(value, unit=unit)
-                    elif isinstance(value, str):
-                        metadata[key] = StringUnitValue(value, unit)
-                    else:
-                        raise ValueError('Unexpected value found in cell ' + str(cell))
+                    try:
+                        metadata[key] = Quantity(value, unit)
+                    except UndefinedUnitError:
+                        metadata[key] = (value, unit)
             else:
                 continue
             break
-        return LabelMetadata(metadata)
+        return AssayMetadata(metadata)
+
+    @classmethod
+    def _find_assays(cls, ws):
+        assays = []
+        for row in ws.iter_rows(min_col=1, max_col=1):
+            for cell in row:
+                if cell.value == "Cycle Nr." or cell.value == "<>":
+                    assays.append(cell)
+        return assays
+
+    @classmethod
+    def _read_assay(cls, file, ws, cell, last=None):
+        nrows = last.row - cell.row if last is not None else None
+        if cell.value == "Cycle Nr.":
+            name = ws.cell(row=cell.row-1, column=cell.column).value
+            raw = pd.read_excel(file, skiprows=cell.row-1, index_col=0, nrows=nrows) \
+                    .replace('OVER', np.inf) \
+                    .apply(pd.to_numeric, errors='coerce')
+            times = pd.Index(pd.to_timedelta(raw.iloc[0], unit='S')).rename('time')
+            temps = pd.Index(raw.iloc[1]).rename('temperature')
+            data = raw.rename_axis(index='well', columns=raw.index.name) \
+                      .drop(raw[~raw.index.to_series().str.match("[A-Z]{1,2}[0-9]{1,3}")].index)
+            index = data.index.to_series().str.extract('([A-Z]+)([0-9]+)') \
+                        .rename({0: 'row', 1: 'column'}, axis='columns') \
+                        .set_index(['row', 'column']).index
+            columns = pd.MultiIndex.from_arrays(
+                [data.columns.rename('cycle'), pd.Series([name for c in data.columns], name='label'), times, temps])
+            data = pd.DataFrame(data.values, index=index, columns=columns) \
+                     .drop(columns[np.isnat(columns.get_level_values(2))], axis='columns')
+        elif cell.value == "<>":
+            temperature = float(ws.cell(row=cell.row-1, column=cell.column+1).value \
+                                  .replace("Temperature: ", "").replace(" °C", ""))
+            raw = pd.read_excel(file, skiprows=cell.row-1, header=0, index_col=0, nrows=nrows) \
+                    .replace('OVER', np.inf).apply(pd.to_numeric, errors='coerce')
+            data = raw.loc[
+                    [i for i in raw.index if str(i).isupper() and len(i) == 1],
+                    [c for c in raw.columns if not str(c).startswith('Unnamed: ')]] \
+                .rename_axis(index='row', columns='column') \
+                .melt(var_name='column', ignore_index=False).set_index('column', append=True).dropna()
+            columns = pd.MultiIndex.from_arrays([
+                pd.Series([1], name='cycle'),
+                pd.Series(['Assay'], name='label'),
+                pd.Series([np.timedelta64(0, 's')], name='time'),
+                pd.Series([temperature], name='temperature')
+            ])
+            data = pd.DataFrame(data.values, index=data.index, columns=columns)
+        else:
+            raise ValueError
+
+        return data
 
     @classmethod
     def _find_exact(cls, ws, value, col_shift=1, **opts):
@@ -106,7 +166,6 @@ class TecanReader:
 
 
 class OldTecanReader:
-
     TS_FORMAT = '%m/%d/%Y %I:%M:%S %p'
 
     @classmethod
@@ -138,10 +197,10 @@ class OldTecanReader:
             start_ts = cls._get_start_ts(ws)
             end_ts = cls._get_end_ts(ws)
             raw = pd.read_excel(file, skiprows=start_row - 1, header=0, index_col=0) \
-                    .replace('OVER', np.inf).apply(pd.to_numeric, errors='coerce')
+                .replace('OVER', np.inf).apply(pd.to_numeric, errors='coerce')
             data = raw.loc[
-                    [i for i in raw.index if str(i).isupper() and len(i) == 1],
-                    [c for c in raw.columns if not str(c).startswith('Unnamed: ')]]
+                [i for i in raw.index if str(i).isupper() and len(i) == 1],
+                [c for c in raw.columns if not str(c).startswith('Unnamed: ')]]
 
             metadata = {
                 'timestamp': timestamp,
@@ -215,7 +274,7 @@ class LuciferaseExperimentReader:
 
     @classmethod
     def read(cls, metadata_file, plate_files):
-        plates = [TecanReader.read(file) for file in plate_files]
+        plates = [OldTecanReader.read(file) for file in plate_files]
         metadata = MetadataReader.read(metadata_file)
 
         return LuciferaseExperiment(metadata, plates)
@@ -225,8 +284,8 @@ class DualLuciferaseExperimentReader:
 
     @classmethod
     def read(cls, metadata_file, firefly_files, renilla_files):
-        firefly = [TecanReader.read(file) for file in firefly_files]
-        renilla = [TecanReader.read(file) for file in renilla_files]
+        firefly = [OldTecanReader.read(file) for file in firefly_files]
+        renilla = [OldTecanReader.read(file) for file in renilla_files]
         metadata = MetadataReader.read(metadata_file)
 
         return DualLuciferaseExperiment(metadata, firefly, renilla)

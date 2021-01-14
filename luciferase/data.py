@@ -2,52 +2,6 @@ import pandas as pd
 import numpy as np
 
 
-class UnitValue:
-
-    def __new__(cls, unit):
-        o = object.__new__(cls)
-        o._unit = unit
-        return o
-
-    def __repr__(self):
-        if not self._unit:
-            return super().__repr__()
-        else:
-            return str(super().__repr__()) + ' ' + str(self._unit)
-
-
-class IntUnitValue(UnitValue, int):
-
-    def __new__(cls, value, unit=None):
-        i = int.__new__(cls, value)
-        i._unit = unit
-        return i
-
-
-class RealUnitValue(UnitValue, float):
-
-    def __new__(cls, value, unit=None):
-        i = float.__new__(cls, value)
-        i._unit = unit
-        return i
-
-
-class ComplexUnitValue(UnitValue, complex):
-
-    def __new__(cls, real, imag=None, unit=None):
-        i = complex.__new__(cls, real, imag)
-        i._unit = unit
-        return i
-
-
-class StringUnitValue(str, UnitValue):
-
-    def __new__(cls, value, unit=None):
-        i = str.__new__(cls, value)
-        i._unit = unit
-        return i
-
-
 class GenericMetadata:
 
     def __init__(self, metadata):
@@ -65,6 +19,9 @@ class GenericMetadata:
     def __str__(self):
         return type(self).__name__ + '(' + str(self._metadata) + ')'
 
+    def __dict__(self):
+        return self._metadata.copy()
+
 
 class InstrumentMetadata(GenericMetadata):
     pass
@@ -74,15 +31,16 @@ class PlateMetadata(GenericMetadata):
     pass
 
 
-class LabelMetadata(GenericMetadata):
+class AssayMetadata(GenericMetadata):
     pass
 
 
 class TecanInfinitePlate:
 
-    def __init__(self, data, metadata):
+    def __init__(self, data, metadata, instrument):
         self._data = data
         self._metadata = metadata
+        self._instrument = instrument
 
     @property
     def data(self):
@@ -90,23 +48,27 @@ class TecanInfinitePlate:
 
     @property
     def metadata(self):
-        return self._metadata.copy()
+        return self._metadata
+
+    @property
+    def assays(self):
+        return self._metadata.assays
 
     @property
     def timestamp(self):
-        return self._metadata.get('timestamp', None)
+        return self._instrument.session_start
 
     @property
     def instrument(self):
-        return self._metadata.get('instrument', None)
+        return self._instrument
 
     @property
     def start(self):
-        return self._metadata.get('start', None)
+        return self._metadata.start
 
     @property
     def end(self):
-        return self._metadata.get('end', None)
+        return self._metadata.end
 
 
 class TimeLapsePlate(TecanInfinitePlate):
