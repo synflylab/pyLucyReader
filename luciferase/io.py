@@ -86,7 +86,7 @@ class TecanReader:
                 else:
                     try:
                         metadata[key] = Quantity(value, unit)
-                    except UndefinedUnitError:
+                    except (UndefinedUnitError, ValueError):
                         metadata[key] = (value, unit)
             else:
                 continue
