@@ -52,7 +52,6 @@ class TecanReader:
 
     @classmethod
     def _clean_date(cls, d):
-        print(d)
         formats = ['%m/%d/%Y', '%Y/%m/%d', '%m-%d-%Y', '%Y-%m-%d']
         return cls._clean_datetime(d, formats)
 
