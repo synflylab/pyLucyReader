@@ -1,4 +1,6 @@
 import datetime
+from typing import Iterable, Union
+
 import openpyxl
 import numpy as np
 import pandas as pd
@@ -10,7 +12,8 @@ from pint import Quantity, UndefinedUnitError
 
 
 class TecanReader:
-    TS_FORMAT = '%m/%d/%Y %I:%M:%S %p'
+    TS_INFINITE_FORMAT = '%m/%d/%Y %I:%M:%S %p'
+    TS_SPARK_FORMAT = '%Y-%m-%d %H:%M:%S'
 
     @classmethod
     def read(cls, file):
@@ -31,14 +34,34 @@ class TecanReader:
                                       InstrumentMetadata(instrument_metadata))
 
     @classmethod
+    def _clean_datetime(cls, dt, formats):
+        result = dt
+        if isinstance(dt, str):
+            for f in formats:
+                try:
+                    result = datetime.datetime.strptime(dt, f)
+                    break
+                except ValueError:
+                    result = None
+        return result
+
+    @classmethod
+    def _clean_time(cls, t):
+        formats = ['%I:%M:%S %p', '%H:%M:%S', '%H:%M']
+        return cls._clean_datetime(t, formats)
+
+    @classmethod
+    def _clean_date(cls, d):
+        print(d)
+        formats = ['%m/%d/%Y', '%Y/%m/%d', '%m-%d-%Y', '%Y-%m-%d']
+        return cls._clean_datetime(d, formats)
+
+
+    @classmethod
     def _read_header(cls, ws):
 
-        date = cls._find_exact(ws, 'Date:', col_shift=1, min_col=1, max_col=1)
-        if not date:
-            date = cls._find_exact(ws, 'Date:', col_shift=4, min_col=1, max_col=1)
-        time = cls._find_exact(ws, 'Time:', col_shift=1, min_col=1, max_col=1)
-        if not time:
-            time = cls._find_exact(ws, 'Time:', col_shift=4, min_col=1, max_col=1)
+        date = cls._clean_date(cls._find_exact(ws, 'Date:', col_shift=range(1, 5), min_col=1, max_col=1))
+        time = cls._clean_time(cls._find_exact(ws, 'Time:', col_shift=range(1, 5), min_col=1, max_col=1))
 
         instrument_metadata = {
             'application': cls._find_beginning(ws, 'Application: ', min_col=1, max_col=1),
@@ -47,39 +70,62 @@ class TecanReader:
             'serial_number': cls._find_beginning(ws, 'Serial number: ', min_col=5, max_col=5),
             'system': cls._find_exact(ws, 'System', col_shift=4, min_col=1, max_col=1),
             'user': cls._find_exact(ws, 'User', col_shift=4, min_col=1, max_col=1),
-            'session_start': datetime.datetime.strptime(date.strftime('%m/%d/%Y ') + time, cls.TS_FORMAT)
+            'session_start': datetime.datetime.strptime(date.strftime('%Y-%m-%d ') + time.strftime('%H:%M:%S'),
+                                                        cls.TS_SPARK_FORMAT)
         }
 
         def _to_time(t):
-            return datetime.datetime.strptime(t, cls.TS_FORMAT) if t is not None else t
+            return cls._clean_datetime(t, [cls.TS_INFINITE_FORMAT, cls.TS_SPARK_FORMAT])
+
+        start = _to_time(cls._find_header(ws, 'Start Time', col_shift=range(1, 5), min_col=1, max_col=1))
+        end = _to_time(cls._find_header(ws, 'End Time', col_shift=range(1, 5), min_col=1, max_col=1))
 
         plate_metadata = {
             'type': cls._find_exact(ws, 'Plate', col_shift=4, min_col=1, max_col=1),
             'assays': [cls._read_label(ws, label) for label in cls._find_labels(ws)],
-            'start': _to_time(cls._find_exact(ws, 'Start Time:', col_shift=1, min_col=1, max_col=1)),
-            'end': _to_time(cls._find_exact(ws, 'End Time:', col_shift=1, min_col=1, max_col=1)),
+            'start': start,
+            'end': end,
         }
 
         return plate_metadata, instrument_metadata
+
+    @classmethod
+    def _get_label_mode(cls, ws, label):
+        mode = None
+        for i in range(1, 5):
+            mode = ws.cell(row=label.row, column=label.column + i).value
+            if mode:
+                break
+        return mode
+
+    @classmethod
+    def _get_label_name(cls, ws, label):
+        mode = None
+        for i in range(1, 5):
+            mode = ws.cell(row=label.row, column=label.column + i).value
+            if mode:
+                break
+        return mode
 
     @classmethod
     def _find_labels(cls, ws):
         labels = []
         for row in ws.iter_rows(min_col=1, max_col=1):
             for cell in row:
-                if cell.value == "Mode":
+                if str(cell.value).lower() == "mode" and str(cls._get_label_mode(ws, cell)).lower() != 'kinetic':
                     labels.append(cell)
         return labels
 
     @classmethod
     def _read_label(cls, ws, label):
+
         metadata = {
-            'mode': ws.cell(row=label.row, column=label.column + 4).value
+            'mode': cls._get_label_mode(ws, label)
         }
         for row in ws.iter_rows(min_col=1, max_col=1, min_row=label.row + 1, max_row=label.row + 21):
             for cell in row:
-                if (cell.value == "Mode" or
-                        cell.value == "Part of Plate" or
+                if (str(cell.value).lower() == "mode" or
+                        str(cell.value).lower() == "part of plate" or
                         not cell.value):
                     break
                 key = str(cell.value).lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
@@ -122,11 +168,11 @@ class TecanReader:
                         .rename({0: 'row', 1: 'column'}, axis='columns').apply(pd.to_numeric, errors='ignore') \
                         .set_index(['row', 'column']).index
             columns = pd.MultiIndex.from_arrays(
-                [data.columns.rename('cycle'), pd.Series([name for c in data.columns], name='label'), times, temps])
+                [data.columns.rename('cycle'), pd.Series([name for _ in data.columns], name='label'), times, temps])
             data = pd.DataFrame(data.values, index=index, columns=columns) \
                      .drop(columns[np.isnat(columns.get_level_values(2))], axis='columns')
         elif cell.value == "<>":
-            temperature = float(ws.cell(row=cell.row-1, column=cell.column+1).value \
+            temperature = float(ws.cell(row=cell.row-1, column=cell.column+1).value
                                   .replace("Temperature: ", "").replace(" °C", ""))
             raw = pd.read_excel(file, skiprows=cell.row-1, header=0, index_col=0, nrows=nrows) \
                     .replace('OVER', np.inf).apply(pd.to_numeric, errors='coerce')
@@ -148,9 +194,26 @@ class TecanReader:
         return data
 
     @classmethod
-    def _find_exact(cls, ws, value, col_shift=1, **opts):
+    def _get_shifted_value(cls, ws, c, col_shift):
+        if isinstance(col_shift, Iterable):
+            for s in col_shift:
+                v = ws.cell(row=c.row, column=c.column + s).value
+                if v:
+                    return v
+        else:
+            return ws.cell(row=c.row, column=c.column + col_shift).value
+
+        return None
+
+    @classmethod
+    def _find_exact(cls, ws, value, col_shift: Union[int, Iterable, None] = 1, **opts):
         return cls._find_cell(ws, lambda c: c.value == value,
-                              lambda c: ws.cell(row=c.row, column=c.column + col_shift).value, **opts)
+                              lambda c: cls._get_shifted_value(ws, c, col_shift), **opts)
+
+    @classmethod
+    def _find_header(cls, ws, value, col_shift: Union[int, Iterable, None] = 1, **opts):
+        return cls._find_cell(ws, lambda c: str(c.value).strip(': \t\n\r') == value,
+                              lambda c: cls._get_shifted_value(ws, c, col_shift), **opts)
 
     @classmethod
     def _find_beginning(cls, ws, value, **opts):
