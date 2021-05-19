@@ -34,7 +34,11 @@ class TecanReader:
     def _read_header(cls, ws):
 
         date = cls._find_exact(ws, 'Date:', col_shift=1, min_col=1, max_col=1)
+        if not date:
+            date = cls._find_exact(ws, 'Date:', col_shift=4, min_col=1, max_col=1)
         time = cls._find_exact(ws, 'Time:', col_shift=1, min_col=1, max_col=1)
+        if not time:
+            time = cls._find_exact(ws, 'Time:', col_shift=4, min_col=1, max_col=1)
 
         instrument_metadata = {
             'application': cls._find_beginning(ws, 'Application: ', min_col=1, max_col=1),
