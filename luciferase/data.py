@@ -200,7 +200,7 @@ class DualLuciferaseExperiment(LuciferaseExperiment):
 
     @property
     def wells(self):
-        return self.reads.join(self.metadata, how='outer')
+        return self.reads.join(self.metadata, how='outer', rsuffix='_meta')
 
     def normalize(self, background='null', to=None, on=None, threshold=0):
         raw = self.wells
