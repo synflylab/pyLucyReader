@@ -132,6 +132,50 @@ class TimePoint(AbstractTimePoint):
         return int(self._t_data.columns.get_level_values('cycle')[0])
 
 
+class AbstractTimeSlice:
+
+    @property
+    @abstractmethod
+    def data(self):
+        pass
+
+    @property
+    def timepoints(self) -> pd.Index:
+        return pd.Index(self.data.columns.get_level_values('time'))
+
+    @property
+    def cycles(self) -> pd.DataFrame:
+        return pd.DataFrame(self.data.columns.get_level_values('cycle'), index=self.timepoints)
+
+    @property
+    def temperatures(self) -> pd.DataFrame:
+        return pd.DataFrame(self.data.columns.get_level_values('temperature'), index=self.timepoints)
+
+
+class TimeAccessor(AbstractTimeSlice):
+
+    def __init__(self, ts: TimeSeries, s: slice) -> None:
+        super().__init__()
+        self._ts = ts
+        data = self._ts.data
+        start, stop, step = s.start, s.stop, s.step
+        if s.start is not None and not isinstance(s.start, timedelta):
+            start = data.columns.get_level_values('time')[s.start]
+        if s.stop is not None and not isinstance(s.stop, timedelta):
+            stop = data.columns.get_level_values('time')[s.stop]
+        if s.step is not None and not isinstance(s.step, timedelta):
+            step = data.columns.get_level_values('time')[s.step]
+        self._slice = slice(start, stop, step)
+
+
+    def __repr__(self) -> str:
+        return str('TimeAccessor(' + self._ts.name + '): slice ' + str(self._slice))
+
+    @property
+    def data(self):
+        return self._ts.data.loc[:, pd.IndexSlice[:, self._slice]]
+
+
 class WellAccessor(Sequence):
 
     def __init__(self, ts: TimeSeries) -> None:
@@ -161,12 +205,12 @@ class WellAccessor(Sequence):
         return 'WellAccessor(' + wl + ', length=' + str(len(self)) + ')'
 
 
-class TimeSeries(AbstractAssay, Sequence):
+class TimeSeries(AbstractAssay, Sequence, AbstractTimeSlice):
 
     def __init__(self, data: pd.DataFrame, metadata: AssayMetadata):
         super().__init__(data, metadata)
 
-    def __getitem__(self, t: Union[int, timedelta, datetime]) -> TimePoint:
+    def __getitem__(self, t: Union[int, timedelta, datetime]) -> Union[TimePoint, TimeAccessor]:
         if isinstance(t, int):
             t = self.timepoints[t]
         elif isinstance(t, datetime):
@@ -174,6 +218,8 @@ class TimeSeries(AbstractAssay, Sequence):
                 t = t - self._plate.timestamp
             else:
                 raise ValueError('plate timestamp is not set')
+        elif isinstance(t, slice):
+            return TimeAccessor(self, t)
 
         return TimePoint(self, t)
 
@@ -188,18 +234,6 @@ class TimeSeries(AbstractAssay, Sequence):
     @property
     def data(self) -> pd.DataFrame:
         return self._data.copy()
-
-    @property
-    def timepoints(self) -> pd.Index:
-        return pd.Index(self.data.columns.get_level_values('time'))
-
-    @property
-    def cycles(self) -> pd.DataFrame:
-        return pd.DataFrame(self.data.columns.get_level_values('cycle'), index=self.timepoints)
-
-    @property
-    def temperatures(self) -> pd.DataFrame:
-        return pd.DataFrame(self.data.columns.get_level_values('temperature'), index=self.timepoints)
 
     @property
     def wells(self) -> WellAccessor:
