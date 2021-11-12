@@ -2,8 +2,9 @@
 ## Read and graph bioluminescence assays captured with Tecan plate readers
 
 ### Reading files:
+
 ```python3
-from luciferase.io import DualLuciferaseExperimentReader
+from tecan.io import DualLuciferaseExperimentReader
 
 experiment = DualLuciferaseExperimentReader.read(
     'metadata.xlsx',
