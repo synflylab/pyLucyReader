@@ -2,23 +2,6 @@ import pandas as pd
 import numpy as np
 
 
-class ExperimentMetadata(pd.DataFrame):
-
-    def __init__(self, raw):
-        raw.columns = [c.lower() for c in raw.columns]
-        if 'well' not in raw.columns:
-            wells = [c for c in raw.columns if 'well' in c]
-            columns = [c for c in raw.columns if c not in wells]
-            raw = raw.melt(id_vars=columns, value_vars=wells, var_name='replica', value_name='well') \
-                     .drop('replica', axis='columns')
-        raw = raw.join(raw['well'].str.extract('([A-Z]+)([0-9]+)').rename({0: 'row', 1: 'column'}, axis='columns')) \
-                 .drop(raw.loc[raw['well'].isna()].index)\
-                 .drop('well', axis='columns')
-        raw['plate'] = raw['plate'].astype(int)
-        raw['column'] = raw['column'].astype(int)
-        super().__init__(raw.set_index(['plate', 'row', 'column']).sort_index())
-
-
 class LuciferaseExperiment:
 
     def __init__(self, metadata, plates):

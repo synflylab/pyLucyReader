@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections import Mapping, Sequence
 from datetime import datetime, timedelta
-from tecan.util import _str_pp_delta, _split_well
+from base.util import strffdelta, strpwell
 from typing import Iterator, Iterable, Union, Optional, Tuple, Dict, KeysView, ValuesView, ItemsView
 
 import pandas as pd
@@ -46,7 +46,10 @@ class AbstractAssay:
 
     def __init__(self, data: pd.DataFrame, metadata: AssayMetadata, plate: Optional[Plate] = None) -> None:
         self._name = data.columns.get_level_values('label').unique()[0]
-        self._data = data.droplevel(axis='columns', level='label')
+        self._data = data.droplevel(axis='columns', level=['cycle', 'label', 'temperature'])
+        idx = data.columns.get_level_values('time')
+        self._cycles = pd.Series(data.columns.get_level_values('cycle'), idx)
+        self._temperatures = pd.Series(data.columns.get_level_values('temperature'), idx)
         self._metadata = metadata
         self._plate = plate
 
@@ -68,7 +71,7 @@ class AbstractAssay:
         return self._metadata
 
     def __repr__(self) -> str:
-        return str('Assay(' + self.name + '): ' + self.metadata.mode)
+        return str('Assay(name=' + self.name + ', mode=' + self.metadata.mode + ') ')
 
 
 class AbstractTimePoint:
@@ -78,21 +81,26 @@ class AbstractTimePoint:
 
     @property
     @abstractmethod
-    def _t_data(self) -> pd.DataFrame:
+    def data(self) -> pd.DataFrame:
         pass
 
     @property
-    def wells(self) -> pd.DataFrame:
-        return self._t_data.droplevel([0, 2], axis='columns') \
-            .reset_index().pivot(index='row', columns='column').droplevel(0, axis='columns')
-
-    @property
-    def data(self) -> pd.DataFrame:
-        return pd.DataFrame(self._t_data.values, index=self._t_data.index, columns=['value'])
-
-    @property
+    @abstractmethod
     def temperature(self) -> float:
-        return self._t_data.columns.get_level_values('temperature')[0]
+        pass
+
+    @property
+    @abstractmethod
+    def cycle(self) -> float:
+        pass
+
+    @property
+    def time(self):
+        return self._t
+
+    @property
+    def wells(self) -> pd.DataFrame:
+        return self.data.reset_index().pivot(index='row', columns='column').droplevel(0, axis='columns')
 
 
 class SingleAssay(AbstractTimePoint, AbstractAssay):
@@ -102,11 +110,15 @@ class SingleAssay(AbstractTimePoint, AbstractAssay):
 
     @property
     def data(self) -> pd.DataFrame:
-        return super().data
+        return self._data
 
     @property
-    def _t_data(self) -> pd.DataFrame:
-        return self._data
+    def temperature(self) -> float:
+        return self._temperatures.iloc[0]
+
+    @property
+    def cycle(self) -> float:
+        return self._cycles.iloc[0]
 
 
 class TimePoint(AbstractTimePoint):
@@ -120,36 +132,34 @@ class TimePoint(AbstractTimePoint):
         return str('TimeSeries(' + self._ts.name + '): timepoint ' + str(self._t))
 
     @property
-    def _t_data(self) -> pd.DataFrame:
-        return self._ts.data.loc[:, pd.IndexSlice[:, self._t]]
+    def data(self) -> pd.DataFrame:
+        return self._ts.data.loc[:, self._t]
 
     @property
-    def time(self) -> timedelta:
-        return self._t_data.columns.get_level_values('time')[0]
+    def temperature(self) -> float:
+        return self._ts.temperatures.loc[self._t]
 
     @property
-    def cycle(self) -> int:
-        return int(self._t_data.columns.get_level_values('cycle')[0])
+    def cycle(self) -> float:
+        return self._ts.cycles.loc[self._t]
 
 
 class AbstractTimeSlice:
 
     @property
     @abstractmethod
-    def data(self):
+    def timepoints(self) -> pd.Index:
         pass
 
     @property
-    def timepoints(self) -> pd.Index:
-        return pd.Index(self.data.columns.get_level_values('time'))
-
-    @property
+    @abstractmethod
     def cycles(self) -> pd.DataFrame:
-        return pd.DataFrame(self.data.columns.get_level_values('cycle'), index=self.timepoints)
+        pass
 
     @property
+    @abstractmethod
     def temperatures(self) -> pd.DataFrame:
-        return pd.DataFrame(self.data.columns.get_level_values('temperature'), index=self.timepoints)
+        pass
 
 
 class TimeAccessor(AbstractTimeSlice):
@@ -167,13 +177,24 @@ class TimeAccessor(AbstractTimeSlice):
             step = data.columns.get_level_values('time')[s.step]
         self._slice = slice(start, stop, step)
 
-
     def __repr__(self) -> str:
-        return str('TimeAccessor(' + self._ts.name + '): slice ' + str(self._slice))
+        return str('TimeAccessor(' + self._ts.name + ', slice=' + str(self._slice) + ')')
 
     @property
     def data(self):
-        return self._ts.data.loc[:, pd.IndexSlice[:, self._slice]]
+        return self._ts.data.loc[:, self._slice]
+
+    @property
+    def timepoints(self) -> pd.Index:
+        return self._ts.timepoints[self._slice]
+
+    @property
+    def cycles(self) -> pd.DataFrame:
+        return self._ts.cycles[self._slice]
+
+    @property
+    def temperatures(self) -> pd.DataFrame:
+        return self._ts.temperatures[self._slice]
 
 
 class WellAccessor(Sequence):
@@ -184,17 +205,17 @@ class WellAccessor(Sequence):
     def __getitem__(self, k: Union[str, slice, Tuple[slice, slice]]) -> pd.DataFrame:
 
         if isinstance(k, list):
-            ids = [_split_well(i) for i in k]
+            ids = [strpwell(i) for i in k]
         elif isinstance(k, tuple) and len(k) == 2:
             ids = pd.IndexSlice[k]
         else:
-            ids = pd.IndexSlice[_split_well(k)]
+            ids = pd.IndexSlice[strpwell(k)]
 
         data = self._ts.data.loc[ids, :]
         if isinstance(data, pd.Series):
-            return data.rename('value').to_frame().droplevel(['cycle', 'temperature'])
+            return data.rename('value').to_frame()
         else:
-            return data.droplevel(['cycle', 'temperature'], axis='columns').T
+            return data.T
 
     def __len__(self) -> int:
         return len(self._ts.data.index)
@@ -227,7 +248,7 @@ class TimeSeries(AbstractAssay, Sequence, AbstractTimeSlice):
         return len(self.timepoints)
 
     def __repr__(self) -> str:
-        tps = [_str_pp_delta(td) for td in self.timepoints].__repr__()
+        tps = [strffdelta(td) for td in self.timepoints].__repr__()
         return str('TimeSeries(' + tps + ', timepoints=' + str(len(self.timepoints)) +
                    ', wells=' + str(len(self.wells)) + ', mode=\'' + self.metadata.mode + '\')')
 
@@ -238,6 +259,18 @@ class TimeSeries(AbstractAssay, Sequence, AbstractTimeSlice):
     @property
     def wells(self) -> WellAccessor:
         return WellAccessor(self)
+
+    @property
+    def timepoints(self) -> pd.Index:
+        return self._data.columns.get_level_values('time')
+
+    @property
+    def cycles(self) -> pd.DataFrame:
+        return pd.DataFrame(self._cycles, index=self.timepoints)
+
+    @property
+    def temperatures(self) -> pd.DataFrame:
+        return pd.DataFrame(self._temperatures, index=self.timepoints)
 
 
 class AssayCollection(Mapping):

@@ -1,21 +1,33 @@
 import re
 from string import Template
 from typing import Tuple
+from datetime import timedelta
 
 
-class DeltaTemplate(Template):
+_strpdelta_regex = re.compile(r'((?P<days>\d+?)d)?((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?\.?\d+?)s)?')
+_strpwell_regex = re.compile(r'([a-z]+)([0-9]+)', re.I)
+
+class _DeltaTemplate(Template):
     delimiter = "%"
 
 
-def strfdelta(td, fmt):
+def strfdelta(td: timedelta, fmt: str):
     d = {"D": td.days}
     d["H"], rem = divmod(td.seconds, 3600)
     d["M"], d["S"] = divmod(rem, 60)
-    t = DeltaTemplate(fmt)
+    t = _DeltaTemplate(fmt)
     return t.substitute(**d)
 
 
-def _str_pp_delta(td):
+def strpdelta(s: str):
+    parts = _strpdelta_regex.match(s)
+    if not parts:
+        raise ValueError(s)
+    time_params = dict([(k, float(v)) for k, v in parts.groupdict().items() if v])
+    return timedelta(**time_params)
+
+
+def strffdelta(td: timedelta) -> str:
     if td.days > 0:
         return strfdelta(td, "%{D}d%{H}h%{M}m%{S}s")
     elif td.seconds > 3600:
@@ -26,10 +38,10 @@ def _str_pp_delta(td):
         return strfdelta(td, "%{S}s")
 
 
-def _split_well(w: str) -> Tuple[str, int]:
+def strpwell(w: str) -> Tuple[str, int]:
     if not isinstance(w, str):
         raise KeyError(w)
-    match = re.match(r"([a-z]+)([0-9]+)", w, re.I)
+    match = _strpwell_regex.match(w)
     if not match or len(match.groups()) != 2:
         raise KeyError(w)
     row, column = match.groups()
