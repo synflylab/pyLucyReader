@@ -26,8 +26,8 @@ class GenericMetadata:
     def __str__(self) -> str:
         return type(self).__name__ + '(' + str(self._metadata) + ')'
 
-    def __dict__(self) -> dict:
-        return self._metadata.copy()
+    def __iter__(self) -> Iterator:
+        return self._metadata.copy().items().__iter__()
 
 
 class InstrumentMetadata(GenericMetadata):

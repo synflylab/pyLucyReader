@@ -8,12 +8,41 @@ import warnings
 
 from base.accessors import AssayAccessor as AbstractAssayAccessor
 from base.accessors import TimeAccessor as AbstractTimeAccessor
-from tecan.data import Plate, PlateMetadata, AssayCollection, InstrumentMetadata, AbstractAssay, AssayMetadata
+from tecan.data import Plate, PlateMetadata, AssayCollection, InstrumentMetadata, AbstractAssay, AssayMetadata, \
+                       GenericMetadata
+
+
+class CorrectedMetadata(GenericMetadata):
+
+    def __new__(cls, *args, **kwargs) -> GenericMetadata:
+        if args and isinstance(args[0], Iterable):
+            metadata = args[0]
+        elif 'metadata' in kwargs:
+            metadata = kwargs['metadata']
+        else:
+            raise ValueError('No metadata provided')
+
+        metadata_type = None
+        for m in metadata:
+            if not isinstance(m, GenericMetadata):
+                raise TypeError('Metadata must be instances of GenericMetadata')
+            if metadata_type is not None and m.__class__ != metadata_type:
+                raise TypeError('All metadata must be of the same type')
+            metadata_type = m.__class__
+
+        oldmeta = [dict(m) for m in metadata]
+        newmeta = {}
+        for key in set([k for m in oldmeta for k in m.keys()]):
+            newmeta[key] = [m.get(key) for m in oldmeta]
+            if len(set(newmeta[key])) == 1:
+                newmeta[key] = newmeta[key][0]
+
+        return metadata_type(newmeta)
 
 
 class CorrectedAssay(AbstractAssay):
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args, **kwargs) -> CorrectedAssay:
         if args and isinstance(args[0], Iterable):
             assays = args[0]
         elif 'assays' in kwargs:
@@ -34,21 +63,34 @@ class CorrectedAssay(AbstractAssay):
         return super().__new__(implementation)
 
     # noinspection PyMissingConstructor
-    def __init__(self, assays: Iterable[AbstractAssay]) -> None:
+    def __init__(self, assays: Iterable[AbstractAssay], update=False) -> None:
         self._assays = list(assays)
         self._data = None
-        self._metadata = None
+        self._metadata = CorrectedMetadata([a.metadata for a in self._assays])
+        self._update = update
 
     def __repr__(self) -> str:
         return str(self.__class__.__name__ + '(name=' + self.name + ', mode=' + self.metadata.mode + ')')
 
+    def _cache_data(self):
+        self._data = self._assays[0].raw
+        for assay in self._assays[1:]:
+            self._data = self._data.append(assay.raw.drop(self._data.index, errors='ignore'))
+            if self._update:
+                self._data.update(assay.data)
+        self._data.sort_index(inplace=True)
+
     @property
     def data(self) -> pd.DataFrame:
         if self._data is None:
-            self._data = self._assays[0].data
-            for assay in self._assays[1:]:
-                self._data = self._data.append(assay.data.drop(self._data.index, errors='ignore'))
+            self._cache_data()
         return super().data
+
+    @property
+    def raw(self) -> pd.DataFrame:
+        if self._data is None:
+            self._cache_data()
+        return self._data
 
     @property
     def name(self) -> str:
@@ -64,26 +106,13 @@ class CorrectedPlate(Plate):
     # noinspection PyMissingConstructor
     def __init__(self, plates: Iterable[Plate]):
         self._plates = plates
-
-    @property
-    def data(self) -> pd.DataFrame:
-        pass
-
-    @property
-    def metadata(self) -> PlateMetadata:
-        return self._metadata
-
-    @property
-    def assays(self) -> AssayCollection:
-        return self._assays
+        self._assays = AssayCollection(CorrectedAssay(a) for a in zip(*(p.assays for p in plates)))
+        self._metadata = CorrectedMetadata([p.metadata for p in self._plates])
+        self._instrument = CorrectedMetadata([p.instrument for p in self._plates])
 
     @property
     def timestamp(self) -> datetime:
         return self._instrument.session_start
-
-    @property
-    def instrument(self) -> InstrumentMetadata:
-        return self._instrument
 
     @property
     def start(self) -> datetime:
@@ -92,13 +121,6 @@ class CorrectedPlate(Plate):
     @property
     def end(self) -> datetime:
         return self._metadata.end
-
-    @property
-    def samples(self) -> pd.Index:
-        return self.data.index
-
-    def __repr__(self) -> str:
-        return "Plate(" + str(len(self.assays)) + " assays, " + str(len(self.data.index)) + " samples)"
 
 
 class ExperimentMetadata(pd.DataFrame):
